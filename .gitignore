@@ -31,3 +31,4 @@ k8s/secret.yaml
 
 
 /generated/prisma/
+k8s/billing-db-admin.yaml

@@ -1,0 +1,60 @@
+# Cria o billing_db e o billing_user no RDS (idempotente). O CD roda este job antes da migração.
+# Usa o Secret billing-db-admin (URL da conta mestre + senha do billing_user); ver k8s/README.md.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: billing-db-bootstrap
+  namespace: billing
+data:
+  bootstrap.sql: |
+    \set ON_ERROR_STOP on
+    SELECT format('CREATE ROLE billing_user LOGIN PASSWORD %L', :'billing_password')
+     WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'billing_user') \gexec
+    SELECT format('ALTER ROLE billing_user LOGIN PASSWORD %L', :'billing_password') \gexec
+    GRANT billing_user TO CURRENT_USER WITH SET TRUE;
+    SELECT 'CREATE DATABASE billing_db OWNER billing_user'
+     WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = 'billing_db') \gexec
+    REVOKE CONNECT ON DATABASE billing_db FROM PUBLIC;
+    GRANT CONNECT ON DATABASE billing_db TO billing_user;
+    SELECT format('REVOKE CONNECT ON DATABASE %I FROM PUBLIC', current_database()) \gexec
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: billing-db-bootstrap
+  namespace: billing
+spec:
+  backoffLimit: 2
+  ttlSecondsAfterFinished: 300
+  template:
+    spec:
+      restartPolicy: Never
+      automountServiceAccountToken: false
+      containers:
+        - name: bootstrap
+          image: postgres:16-alpine
+          command:
+            - sh
+            - -c
+            # psql não entende sslmode=no-verify (opção do driver do Node); a conexão continua com TLS.
+            - >-
+              psql "$(echo "$ADMIN_DATABASE_URL" | sed 's/sslmode=no-verify/sslmode=require/')"
+              -v billing_password="$BILLING_DB_PASSWORD" -f /sql/bootstrap.sql
+          envFrom:
+            - secretRef:
+                name: billing-db-admin
+          resources:
+            requests:
+              cpu: 25m
+              memory: 32Mi
+              ephemeral-storage: 16Mi
+            limits:
+              memory: 64Mi
+              ephemeral-storage: 64Mi
+          volumeMounts:
+            - name: sql
+              mountPath: /sql
+      volumes:
+        - name: sql
+          configMap:
+            name: billing-db-bootstrap

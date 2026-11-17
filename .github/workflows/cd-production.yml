@@ -17,6 +17,7 @@ env:
   ECR_REPOSITORY: oficina-billing-service
   K8S_NAMESPACE: billing
   DEPLOYMENT_NAME: oficina-billing-service
+  API_GATEWAY_NAME: oficina-backend-api
 
 jobs:
   deploy:
@@ -96,6 +97,26 @@ jobs:
         with:
           version: 'latest'
 
+      - name: Bootstrap the service database
+        if: hashFiles('k8s/bootstrap-db-job.yaml') != ''
+        run: |
+          set -euo pipefail
+          kubectl delete job billing-db-bootstrap -n "${K8S_NAMESPACE}" --ignore-not-found
+          kubectl apply -f k8s/bootstrap-db-job.yaml
+          kubectl wait --for=condition=complete job/billing-db-bootstrap -n "${K8S_NAMESPACE}" --timeout=120s
+
+      # A URL do API Gateway muda a cada apply do oficina-lambda-auth: descoberta aqui, a cada deploy.
+      - name: Apply ConfigMap with the public URL
+        if: hashFiles('k8s/configmap.yaml') != ''
+        run: |
+          set -euo pipefail
+          URL=$(aws apigatewayv2 get-apis --query "Items[?Name=='${API_GATEWAY_NAME}'].ApiEndpoint | [0]" --output text)
+          if [ "$URL" = "None" ] || [ -z "$URL" ]; then
+            echo "::warning::API Gateway ${API_GATEWAY_NAME} não encontrado: PUBLIC_BASE_URL fica sem valor e o checkout sai sem notification_url."
+            URL=""
+          fi
+          sed "s#https://REPLACE.execute-api.sa-east-1.amazonaws.com#${URL}#" k8s/configmap.yaml | kubectl apply -f -
+
       - name: Run database migration
         if: hashFiles('k8s/migration-job.yaml') != ''
         run: |
@@ -108,6 +129,7 @@ jobs:
       - name: Deploy application manifests
         run: |
           set -euo pipefail
+          if [ -f k8s/redis.yaml ]; then kubectl apply -f k8s/redis.yaml; fi
           sed "s#REPLACE_WITH_ECR_IMAGE_URI:latest#${IMAGE}#" k8s/deployment.yaml | kubectl apply -f -
           for f in service ingress hpa; do
             if [ -f "k8s/${f}.yaml" ]; then kubectl apply -f "k8s/${f}.yaml"; fi
