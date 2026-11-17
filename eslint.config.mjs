@@ -33,7 +33,7 @@ export default tseslint.config(
     },
   },
   {
-    files: ['**/*.spec.ts'],
+    files: ['**/*.spec.ts', '**/*-spec.ts'],
     rules: {
       '@typescript-eslint/require-await': 'off',
       '@typescript-eslint/unbound-method': 'off',

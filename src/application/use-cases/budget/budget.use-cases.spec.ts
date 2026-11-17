@@ -14,6 +14,11 @@ import { ApproveBudgetUseCase } from './approve-budget.use-case';
 import { RejectBudgetUseCase } from './reject-budget.use-case';
 import { CreateBudgetUseCase } from './create-budget.use-case';
 import { CancelBudgetUseCase } from './cancel-budget.use-case';
+import { PaymentGatewayUnavailableException } from '@shared/exceptions/domain.exceptions';
+import { IPaymentRepository } from '@domain/repositories/payment.repository.interface';
+import { IPaymentGateway } from '@domain/services/payment-gateway.interface';
+import { PaymentEntity } from '@domain/entities/payment/payment.entity';
+import { PaymentStatus } from '@domain/enums/payment.enum';
 import { TokenRole } from '@domain/enums/token-role.enum';
 import { Logger } from '@nestjs/common';
 
@@ -63,7 +68,25 @@ function setup(budget: BudgetEntity | null = null) {
       return Promise.resolve();
     },
   };
-  return { budgets, outbox, published };
+  const payments = {
+    create: jest.fn((p: PaymentEntity) => Promise.resolve(p)),
+    update: jest.fn((p: PaymentEntity) => Promise.resolve(p)),
+    findById: jest.fn(),
+    findByBudgetId: jest.fn().mockResolvedValue(null),
+    findBySagaId: jest.fn(),
+    findCurrentByOrderId: jest.fn(),
+  } as jest.Mocked<IPaymentRepository>;
+  const gateway = {
+    createCheckout: jest.fn().mockResolvedValue({
+      preferenceId: 'pref-1',
+      checkoutUrl: 'https://mp/checkout/pref-1',
+      sandboxCheckoutUrl: 'https://sandbox.mp/checkout/pref-1',
+    }),
+    getPayment: jest.fn(),
+    refund: jest.fn(),
+    expireCheckout: jest.fn().mockResolvedValue(undefined),
+  } as jest.Mocked<IPaymentGateway>;
+  return { budgets, payments, gateway, outbox, published };
 }
 
 const command = (
@@ -163,10 +186,12 @@ describe('CreateBudgetUseCase', () => {
 describe('CancelBudgetUseCase', () => {
   it('cancela e responde billing.budget.canceled com o motivo', async () => {
     const budget = makeBudget();
-    const { budgets, outbox, published } = setup(budget);
+    const { budgets, payments, gateway, outbox, published } = setup(budget);
     await new CancelBudgetUseCase(
       budgets,
+      payments,
       outbox,
+      gateway,
       transactions,
       logger,
     ).execute(command('billing.budget.cancel', { reason: 'PAYMENT_TIMEOUT' }));
@@ -181,10 +206,12 @@ describe('CancelBudgetUseCase', () => {
   it('é idempotente: já cancelado, só responde de novo', async () => {
     const budget = makeBudget();
     budget.cancel('MANUAL_CANCEL');
-    const { budgets, outbox, published } = setup(budget);
+    const { budgets, payments, gateway, outbox, published } = setup(budget);
     await new CancelBudgetUseCase(
       budgets,
+      payments,
       outbox,
+      gateway,
       transactions,
       logger,
     ).execute(command('billing.budget.cancel', { reason: 'MANUAL_CANCEL' }));
@@ -193,10 +220,12 @@ describe('CancelBudgetUseCase', () => {
   });
 
   it('sem orçamento (a criação falhou), confirma o cancelamento mesmo assim', async () => {
-    const { outbox, budgets, published } = setup(null);
+    const { budgets, payments, gateway, outbox, published } = setup(null);
     await new CancelBudgetUseCase(
       budgets,
+      payments,
       outbox,
+      gateway,
       transactions,
       logger,
     ).execute(command('billing.budget.cancel', {}));
@@ -244,10 +273,13 @@ describe('GetOrderBudgetUseCase', () => {
 
 describe('ApproveBudgetUseCase e RejectBudgetUseCase', () => {
   it('o dono aprova e o evento leva quem aprovou', async () => {
-    const { budgets, outbox, published } = setup(makeBudget());
+    const { budgets, payments, gateway, outbox, published } =
+      setup(makeBudget());
     const result = await new ApproveBudgetUseCase(
       budgets,
+      payments,
       outbox,
+      gateway,
       transactions,
       logger,
     ).execute('b-1', owner);
@@ -287,12 +319,17 @@ describe('ApproveBudgetUseCase e RejectBudgetUseCase', () => {
   });
 
   it('outro cliente não aprova, e nada é publicado', async () => {
-    const { budgets, outbox, published } = setup(makeBudget());
+    const { budgets, payments, gateway, outbox, published } =
+      setup(makeBudget());
     await expect(
-      new ApproveBudgetUseCase(budgets, outbox, transactions, logger).execute(
-        'b-1',
-        otherCustomer,
-      ),
+      new ApproveBudgetUseCase(
+        budgets,
+        payments,
+        outbox,
+        gateway,
+        transactions,
+        logger,
+      ).execute('b-1', otherCustomer),
     ).rejects.toBeInstanceOf(NotFoundException);
     expect(budgets.update).not.toHaveBeenCalled();
     expect(published).toHaveLength(0);
@@ -308,5 +345,148 @@ describe('ApproveBudgetUseCase e RejectBudgetUseCase', () => {
         owner,
       ),
     ).rejects.toBeInstanceOf(InvalidStatusTransitionException);
+  });
+});
+
+describe('ApproveBudgetUseCase: checkout do Mercado Pago', () => {
+  it('cria o checkout com a chave de idempotência do orçamento e devolve o link', async () => {
+    const { budgets, payments, gateway, outbox } = setup(makeBudget());
+
+    const result = await new ApproveBudgetUseCase(
+      budgets,
+      payments,
+      outbox,
+      gateway,
+      transactions,
+      logger,
+    ).execute('b-1', owner);
+
+    expect(gateway.createCheckout).toHaveBeenCalledWith(
+      expect.objectContaining({
+        budgetId: 'b-1',
+        orderId: 'o-1',
+        payerEmail: 'maria@exemplo.com',
+      }),
+    );
+    expect(
+      gateway.createCheckout.mock.calls[0][0].amount.toDecimalString(),
+    ).toBe('100.00');
+    expect(result.checkoutUrl).toBe('https://mp/checkout/pref-1');
+    const payment = payments.create.mock.calls[0][0];
+    expect(payment.status).toBe(PaymentStatus.PENDING);
+    expect(payment.mpPreferenceId).toBe('pref-1');
+    expect(payment.sagaId).toBe('s-1');
+  });
+
+  it('Mercado Pago fora do ar: não aprova, não grava, não publica', async () => {
+    const { budgets, payments, gateway, outbox, published } =
+      setup(makeBudget());
+    gateway.createCheckout.mockRejectedValue(
+      new PaymentGatewayUnavailableException('timeout'),
+    );
+
+    await expect(
+      new ApproveBudgetUseCase(
+        budgets,
+        payments,
+        outbox,
+        gateway,
+        transactions,
+        logger,
+      ).execute('b-1', owner),
+    ).rejects.toBeInstanceOf(PaymentGatewayUnavailableException);
+    expect(budgets.update).not.toHaveBeenCalled();
+    expect(payments.create).not.toHaveBeenCalled();
+    expect(published).toHaveLength(0);
+  });
+
+  it('orçamento já decidido nem chama o Mercado Pago', async () => {
+    const budget = makeBudget();
+    budget.reject('c-1', TokenRole.CUSTOMER);
+    const { budgets, payments, gateway, outbox } = setup(budget);
+
+    await expect(
+      new ApproveBudgetUseCase(
+        budgets,
+        payments,
+        outbox,
+        gateway,
+        transactions,
+        logger,
+      ).execute('b-1', owner),
+    ).rejects.toThrow();
+    expect(gateway.createCheckout).not.toHaveBeenCalled();
+  });
+});
+
+describe('CancelBudgetUseCase: checkout pendente', () => {
+  const pendingPayment = () =>
+    PaymentEntity.create(
+      {
+        budgetId: 'b-1',
+        orderId: 'o-1',
+        sagaId: 's-1',
+        customerId: 'c-1',
+        amount: Money.fromDecimalString('100.00'),
+        mpPreferenceId: 'pref-1',
+        checkoutUrl: 'https://mp/checkout/pref-1',
+      },
+      'pay-1',
+    );
+
+  it('expira o pagamento pendente e o checkout no Mercado Pago', async () => {
+    const { budgets, payments, gateway, outbox } = setup(makeBudget());
+    const payment = pendingPayment();
+    payments.findByBudgetId.mockResolvedValue(payment);
+
+    await new CancelBudgetUseCase(
+      budgets,
+      payments,
+      outbox,
+      gateway,
+      transactions,
+      logger,
+    ).execute(command('billing.budget.cancel', { reason: 'PAYMENT_TIMEOUT' }));
+
+    expect(payment.status).toBe(PaymentStatus.EXPIRED);
+    expect(payments.update).toHaveBeenCalledWith(payment);
+    expect(gateway.expireCheckout).toHaveBeenCalledWith('pref-1');
+  });
+
+  it('falha ao expirar o checkout não impede o cancelamento', async () => {
+    const { budgets, payments, gateway, outbox, published } =
+      setup(makeBudget());
+    payments.findByBudgetId.mockResolvedValue(pendingPayment());
+    gateway.expireCheckout.mockRejectedValue(new Error('MP fora'));
+
+    await new CancelBudgetUseCase(
+      budgets,
+      payments,
+      outbox,
+      gateway,
+      transactions,
+      logger,
+    ).execute(command('billing.budget.cancel', { reason: 'MANUAL_CANCEL' }));
+
+    expect(published[0].routingKey).toBe('billing.budget.canceled');
+  });
+
+  it('pagamento já aprovado não é expirado', async () => {
+    const { budgets, payments, gateway, outbox } = setup(makeBudget());
+    const payment = pendingPayment();
+    payment.confirm('mp-1', new Date());
+    payments.findByBudgetId.mockResolvedValue(payment);
+
+    await new CancelBudgetUseCase(
+      budgets,
+      payments,
+      outbox,
+      gateway,
+      transactions,
+      logger,
+    ).execute(command('billing.budget.cancel', { reason: 'MANUAL_CANCEL' }));
+
+    expect(payment.status).toBe(PaymentStatus.APPROVED);
+    expect(gateway.expireCheckout).not.toHaveBeenCalled();
   });
 });

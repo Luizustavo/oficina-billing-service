@@ -33,6 +33,9 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
   get budget() {
     return this.db.budget;
   }
+  get payment() {
+    return this.db.payment;
+  }
   get budgetItem() {
     return this.db.budgetItem;
   }
@@ -113,6 +116,7 @@ export class PrismaService implements OnModuleInit, OnModuleDestroy {
     }
     const tableNames = [
       'outbox_messages',
+      'payments',
       'processed_messages',
       'budget_items',
       'budgets',

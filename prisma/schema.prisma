@@ -41,7 +41,8 @@ model Budget {
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
 
-  items BudgetItem[]
+  items   BudgetItem[]
+  payment Payment?
 
   @@index([orderId, createdAt])
   @@index([customerId])
@@ -86,4 +87,40 @@ model ProcessedMessage {
   processedAt DateTime @default(now())
 
   @@map("processed_messages")
+}
+
+enum PaymentStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CANCELLED
+  EXPIRED
+  REFUNDED
+  REFUND_FAILED
+}
+
+model Payment {
+  id                 String        @id
+  budgetId           String        @unique
+  orderId            String
+  sagaId             String        @unique
+  customerId         String
+  amount             Decimal       @db.Decimal(10, 2)
+  status             PaymentStatus
+  mpPreferenceId     String
+  checkoutUrl        String
+  sandboxCheckoutUrl String?
+  mpPaymentId        String?
+  failureReason      String?
+  failureDetail      String?
+  paidAt             DateTime?
+  mpRefundId         String?
+  refundedAt         DateTime?
+  createdAt          DateTime      @default(now())
+  updatedAt          DateTime      @updatedAt
+
+  budget Budget @relation(fields: [budgetId], references: [id])
+
+  @@index([orderId, createdAt])
+  @@map("payments")
 }

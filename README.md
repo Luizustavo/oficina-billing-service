@@ -40,6 +40,8 @@ Todas com o prefixo `/api/billing`, que o Traefik usa para encaminhar ao serviç
 | `GET /api/billing/orders/:orderId/budget` | Orçamento atual da OS |
 | `POST /api/billing/budgets/:id/approve` | Cliente aprova o orçamento |
 | `POST /api/billing/budgets/:id/reject` | Cliente recusa o orçamento (motivo opcional) |
+| `GET /api/billing/orders/:orderId/payment` | Pagamento da OS: status e link do checkout |
+| `POST /api/billing/webhooks/mercadopago` | Notificações do Mercado Pago (pública, com assinatura) |
 
 As rotas de orçamento aceitam o token do cliente (emitido pela Lambda de CPF) e da equipe (`ADMIN`, `ATTENDANT`). O cliente só enxerga e decide os próprios orçamentos: o de outro cliente responde 404, igual a um orçamento inexistente.
 
@@ -50,9 +52,20 @@ Consome a fila `billing.commands` (comandos do OS Service) e publica em `saga.ev
 | Comando recebido | Resposta publicada |
 |---|---|
 | `billing.budget.create` | `billing.budget.created` ou `billing.budget.creation-failed` (`INVALID_PAYLOAD`, `INVALID_ITEMS`, `TOTAL_MISMATCH`) |
-| `billing.budget.cancel` | `billing.budget.canceled` (idempotente) |
+| `billing.budget.cancel` | `billing.budget.canceled` (idempotente; expira o checkout pendente) |
+| `billing.payment.refund` | `billing.payment.refunded` ou `billing.payment.refund-failed` |
 
-A aprovação e a recusa do cliente publicam `billing.budget.approved` e `billing.budget.rejected`.
+A aprovação e a recusa do cliente publicam `billing.budget.approved` e `billing.budget.rejected`. O webhook do Mercado Pago publica `billing.payment.confirmed` ou `billing.payment.failed`.
+
+## Mercado Pago (Checkout Pro)
+
+1. **Aprovação.** Ao aprovar o orçamento, o Billing cria o checkout no Mercado Pago (chave de idempotência = id do orçamento) e devolve o link de pagamento na resposta. Se o Mercado Pago estiver fora do ar, a aprovação responde **503** e nada muda: o cliente tenta de novo.
+2. **Webhook.** O Mercado Pago avisa em `/api/billing/webhooks/mercadopago`. O Billing valida a assinatura (`x-signature`, com a assinatura secreta do painel), **busca o pagamento na API do Mercado Pago** em vez de confiar no corpo do aviso e publica o evento.
+3. **Duplicatas.** O mesmo aviso chega várias vezes. O Redis guarda os avisos já tratados (`mp:webhook:<id>:<status>`, 24 h) e trava a OS durante o processamento; o banco só aceita cada transição de status uma vez, então a duplicata é barrada mesmo com o Redis fora.
+4. **Estorno.** O comando `billing.payment.refund` chama a API de estornos (chave de idempotência = id do pagamento).
+5. **Cancelamento.** Cancelar um orçamento com pagamento pendente expira o checkout. Se o pagamento ainda entrar, ele é publicado mesmo assim e o OS pede o estorno (`LATE_PAYMENT`).
+
+Para testar no sandbox: cartões de teste do Mercado Pago, titular `APRO` (aprovado) ou `OTHE` (recusado), CPF `12345678909`, em janela anônima, logado com a conta de teste do comprador.
 
 ## CI/CD
 
