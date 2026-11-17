@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: oficina-billing-service
+  namespace: billing
+  labels:
+    app: oficina-billing-service
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: oficina-billing-service
+  template:
+    metadata:
+      labels:
+        app: oficina-billing-service
+    spec:
+      automountServiceAccountToken: false
+      containers:
+        - name: oficina-billing-service
+          image: REPLACE_WITH_ECR_IMAGE_URI:latest
+          ports:
+            - containerPort: 3000
+          envFrom:
+            - configMapRef:
+                name: oficina-billing-service-config
+            - secretRef:
+                name: oficina-billing-service-secret
+                optional: true
+          env:
+            - name: OTEL_RESOURCE_ATTRIBUTES
+              value: "k8s.namespace.name=billing,k8s.deployment.name=oficina-billing-service"
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "192Mi"
+            limits:
+              cpu: "500m"
+              memory: "384Mi"
+          readinessProbe:
+            httpGet:
+              path: /api/billing/health/ready
+              port: 3000
+            initialDelaySeconds: 10
+            periodSeconds: 10
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/billing/health/live
+              port: 3000
+            initialDelaySeconds: 15
+            periodSeconds: 20
+            failureThreshold: 3
