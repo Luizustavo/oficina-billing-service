@@ -1,0 +1,12 @@
+# Modelo: copie para billing-db-admin.yaml (ignorado pelo git). Só o job de bootstrap usa este Secret.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: billing-db-admin
+  namespace: billing
+type: Opaque
+stringData:
+  # terraform -chdir=oficina-infra-database output -raw database_url (conta mestre do RDS)
+  ADMIN_DATABASE_URL: "postgresql://oficina_user:password@rds-endpoint:5432/oficina_db?sslmode=no-verify"
+  # A mesma senha que vai no DATABASE_URL do secret.yaml (billing_user). Só letras e números.
+  BILLING_DB_PASSWORD: "senha-do-billing-user"
