@@ -5,7 +5,6 @@ import { startTracing } from './infrastructure/observability/tracing';
 
 startTracing();
 
-import { HttpExceptionFilter } from './infrastructure/presentation/filters/http-exception.filter';
 import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { ValidationPipe } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -25,7 +24,6 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  app.useGlobalFilters(new HttpExceptionFilter());
 
   const config = new DocumentBuilder()
     .setTitle('Oficina - Billing Service')

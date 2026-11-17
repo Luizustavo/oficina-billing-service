@@ -32,3 +32,20 @@ export class BusinessRuleException extends DomainException {
     this.name = 'BusinessRuleException';
   }
 }
+
+export class InvalidMessageException extends DomainException {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvalidMessageException';
+  }
+}
+
+export class InvalidBudgetException extends DomainException {
+  constructor(
+    readonly reason: 'INVALID_PAYLOAD' | 'INVALID_ITEMS' | 'TOTAL_MISMATCH',
+    message: string,
+  ) {
+    super(message);
+    this.name = 'InvalidBudgetException';
+  }
+}

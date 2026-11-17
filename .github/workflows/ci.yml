@@ -15,6 +15,7 @@ permissions:
 
 env:
   NODE_VERSION: '20'
+  PLACEHOLDER_DATABASE_URL: postgresql://placeholder:placeholder@localhost:5432/placeholder
 
 jobs:
   lint:
@@ -27,6 +28,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run prisma:generate
+        env:
+          DATABASE_URL: ${{ env.PLACEHOLDER_DATABASE_URL }}
       - run: npm run lint
 
   unit-tests:
@@ -39,6 +43,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run prisma:generate
+        env:
+          DATABASE_URL: ${{ env.PLACEHOLDER_DATABASE_URL }}
       - run: npm test -- --coverage
       - name: Upload coverage report
         uses: actions/upload-artifact@v4
@@ -78,8 +85,39 @@ jobs:
   integration-tests:
     name: Integration Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: billing_test_db
+          POSTGRES_USER: billing_user
+          # Banco descartável do CI: sem senha (trust), em vez de uma senha fixa no código.
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U billing_user -d billing_test_db"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
+      rabbitmq:
+        image: rabbitmq:4.1
+        env:
+          RABBITMQ_DEFAULT_USER: ci
+          RABBITMQ_DEFAULT_PASS: ci-${{ github.run_id }}
+        ports:
+          - 5672:5672
+        # Como root, a imagem 4.1 cria o .erlang.cookie sem permissão de leitura para o usuário 999.
+        options: >-
+          --user 999:999
+          --health-cmd="rabbitmq-diagnostics -q ping"
+          --health-interval=10s
+          --health-timeout=10s
+          --health-retries=12
     env:
       NODE_ENV: test
+      DATABASE_URL: postgresql://billing_user@localhost:5432/billing_test_db
+      RABBITMQ_URL: amqp://ci:ci-${{ github.run_id }}@localhost:5672
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -87,13 +125,30 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run prisma:generate
+      - run: npm run prisma:migrate:deploy
       - run: npm run test:int
 
   e2e-tests:
     name: E2E Tests
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: billing_test_db
+          POSTGRES_USER: billing_user
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U billing_user -d billing_test_db"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=5
     env:
       NODE_ENV: test
+      DATABASE_URL: postgresql://billing_user@localhost:5432/billing_test_db
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -101,6 +156,8 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run prisma:generate
+      - run: npm run prisma:migrate:deploy
       - run: npm run test:e2e
 
   build:
@@ -114,6 +171,9 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: npm
       - run: npm ci --ignore-scripts
+      - run: npm run prisma:generate
+        env:
+          DATABASE_URL: ${{ env.PLACEHOLDER_DATABASE_URL }}
       - run: npm run build
       - name: Docker build
         uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
@@ -131,4 +191,6 @@ jobs:
             docker run --rm --entrypoint sh oficina-billing-service:ci -c "$cmd"
           }
           [ "$(run 'id -u')" != "0" ] || { echo "::error::A imagem roda como root"; exit 1; }
-          run "test -f dist/main.js" && echo "build ok"
+          run "ls node_modules/@prisma/engines | grep -q schema-engine" && echo "motor de migração do Prisma ok"
+          run "ls generated/prisma | grep -q query_engine" && echo "motor de consultas do Prisma ok"
+          run "test -f dist/src/main.js" && echo "build ok"
