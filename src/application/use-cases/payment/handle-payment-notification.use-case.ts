@@ -1,3 +1,4 @@
+import { PaymentGatewayRejectedException } from '@shared/exceptions/domain.exceptions';
 import { IPaymentRepository } from '@domain/repositories/payment.repository.interface';
 import { IOutboxRepository } from '@domain/repositories/outbox.repository.interface';
 import { ITransactionManager } from '@domain/services/transaction-manager.interface';
@@ -30,7 +31,10 @@ export class HandlePaymentNotificationUseCase {
       `Handling Mercado Pago notification for payment ${mpPaymentId}`,
     );
 
-    const remote = await this.gateway.getPayment(mpPaymentId);
+    const remote = await this.fetchPayment(mpPaymentId);
+    if (!remote) {
+      return 'ignored';
+    }
     const key = `mp:webhook:${mpPaymentId}:${remote.status}`;
     if (await this.idempotency.seen(key)) {
       this.logger.log(`Notification ${key} already handled`);
@@ -77,5 +81,16 @@ export class HandlePaymentNotificationUseCase {
       `Payment ${mpPaymentId} (${remote.status}) ${changed ? 'applied' : 'already applied'}`,
     );
     return changed ? 'processed' : 'duplicate';
+  }
+  private async fetchPayment(mpPaymentId: string) {
+    try {
+      return await this.gateway.getPayment(mpPaymentId);
+    } catch (error) {
+      if (!(error instanceof PaymentGatewayRejectedException)) throw error;
+      this.logger.warn(
+        `Mercado Pago does not know payment ${mpPaymentId}, ignoring: ${error.message}`,
+      );
+      return null;
+    }
   }
 }
