@@ -11,12 +11,15 @@ import { SagaMessageHandlerRegistry } from './saga-message-handler.registry';
 import { RabbitMqMessagePublisher } from './rabbitmq-message-publisher';
 import {
   parseSagaEnvelope,
+  SagaEnvelope,
   SagaExchange,
 } from '@domain/messaging/saga-message';
 import { assertBillingTopology, BILLING_COMMANDS_QUEUE } from './topology';
 import { decideOnFailure } from '@domain/messaging/retry-policy';
 import { RabbitMqConnection } from './rabbitmq-connection.service';
 import { ChannelWrapper } from 'amqp-connection-manager';
+import { withMessageLogContext } from '@infrastructure/observability/message-log-context';
+import { tracedConsume } from './message-tracing';
 
 import type { Channel, ConsumeMessage } from 'amqplib';
 
@@ -73,7 +76,9 @@ export class BillingCommandsConsumer
     msg: ConsumeMessage,
   ): Promise<void> {
     try {
-      const outcome = await this.handle(msg);
+      const outcome = await tracedConsume(BILLING_COMMANDS_QUEUE, msg, () =>
+        this.handle(msg),
+      );
       if (outcome === 'rejected') {
         channel.nack(msg, false, false);
       } else {
@@ -89,7 +94,7 @@ export class BillingCommandsConsumer
 
   async handle(msg: ConsumeMessage): Promise<ConsumeOutcome> {
     const body = msg.content.toString('utf8');
-    let envelope;
+    let envelope: SagaEnvelope;
     try {
       envelope = parseSagaEnvelope(body);
       if (!this.registry.find(envelope.type, envelope.version)) {
@@ -104,6 +109,13 @@ export class BillingCommandsConsumer
       return 'rejected';
     }
 
+    return withMessageLogContext(envelope, () => this.process(msg, envelope));
+  }
+
+  private async process(
+    msg: ConsumeMessage,
+    envelope: SagaEnvelope,
+  ): Promise<ConsumeOutcome> {
     const handler = this.registry.find(envelope.type, envelope.version)!;
     const context = `${envelope.type} ${envelope.messageId} (saga ${envelope.sagaId}, order ${envelope.orderId})`;
 
