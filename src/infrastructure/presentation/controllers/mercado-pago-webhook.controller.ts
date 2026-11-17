@@ -10,6 +10,7 @@ import {
 import { HandlePaymentNotificationUseCase } from '@application/use-cases/payment/handle-payment-notification.use-case';
 import { Public } from '@infrastructure/presentation/decorators/public.decorator';
 import { mercadoPagoConfig } from '@infrastructure/config/mercado-pago.config';
+import { BillingMetrics } from '@infrastructure/observability/billing.metrics';
 import {
   InvalidWebhookSignatureError,
   WebhookSignatureValidator,
@@ -29,6 +30,7 @@ export class MercadoPagoWebhookController {
 
   constructor(
     private readonly handleNotification: HandlePaymentNotificationUseCase,
+    private readonly metrics: BillingMetrics,
   ) {}
 
   @Post('mercadopago')
@@ -43,14 +45,14 @@ export class MercadoPagoWebhookController {
     const type = query.type ?? body?.type;
     // IPN antigo e merchant_order chegam sem assinatura; o aviso de pagamento assinado vem junto.
     if (type !== 'payment' || !dataId) {
+      this.metrics.recordWebhook('not_payment');
       return { received: true, outcome: 'ignored' };
     }
 
     this.assertSignature(signature, requestId, dataId);
-    return {
-      received: true,
-      outcome: await this.handleNotification.execute(dataId),
-    };
+    const outcome = await this.handleNotification.execute(dataId);
+    this.metrics.recordWebhook(outcome);
+    return { received: true, outcome };
   }
 
   private assertSignature(
@@ -67,6 +69,7 @@ export class MercadoPagoWebhookController {
       });
     } catch (error) {
       if (error instanceof InvalidWebhookSignatureError) {
+        this.metrics.recordWebhook('invalid_signature');
         throw new UnauthorizedException(`Invalid signature: ${error.reason}`);
       }
       throw error;

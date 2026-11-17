@@ -24,6 +24,7 @@ import { RedisDistributedLock } from '@infrastructure/redis/redis-distributed.lo
 import { IDistributedLock } from '@domain/services/distributed-lock.interface';
 import { MercadoPagoGateway } from '@infrastructure/payment/mercado-pago.gateway';
 import { IPaymentGateway } from '@domain/services/payment-gateway.interface';
+import { BillingMetrics } from '@infrastructure/observability/billing.metrics';
 import { RedisClient } from '@infrastructure/redis/redis.client';
 import { Logger, Module } from '@nestjs/common';
 
@@ -35,6 +36,7 @@ import { Logger, Module } from '@nestjs/common';
   ],
   providers: [
     Logger,
+    BillingMetrics,
     RedisClient,
     CreateBudgetUseCase,
     CancelBudgetUseCase,

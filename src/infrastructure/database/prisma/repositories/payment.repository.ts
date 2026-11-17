@@ -2,16 +2,21 @@ import { IPaymentRepository } from '@domain/repositories/payment.repository.inte
 import { PrismaPaymentMapper } from '@infrastructure/database/prisma/mappers/prisma-payment.mapper';
 import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 import { PaymentEntity } from '@domain/entities/payment/payment.entity';
+import { BillingMetrics } from '@infrastructure/observability/billing.metrics';
 import { Injectable } from '@nestjs/common';
 
 @Injectable()
 export class PaymentRepository implements IPaymentRepository {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly metrics: BillingMetrics,
+  ) {}
 
   async create(payment: PaymentEntity): Promise<PaymentEntity> {
     const created = await this.prisma.payment.create({
       data: PrismaPaymentMapper.toPrisma(payment),
     });
+    this.countStatusAfterCommit(payment);
     return PrismaPaymentMapper.toEntity(created);
   }
 
@@ -20,6 +25,7 @@ export class PaymentRepository implements IPaymentRepository {
       where: { id: payment.id },
       data: PrismaPaymentMapper.toPrisma(payment),
     });
+    this.countStatusAfterCommit(payment);
     return PrismaPaymentMapper.toEntity(updated);
   }
 
@@ -54,5 +60,11 @@ export class PaymentRepository implements IPaymentRepository {
     found: Parameters<typeof PrismaPaymentMapper.toEntity>[0] | null,
   ): PaymentEntity | null {
     return found ? PrismaPaymentMapper.toEntity(found) : null;
+  }
+
+  // Só é gravado depois de uma transição que mudou o status (as entidades devolvem false quando não mudam).
+  private countStatusAfterCommit(payment: PaymentEntity): void {
+    const { status } = payment;
+    this.prisma.afterCommit(() => this.metrics.recordPaymentStatus(status));
   }
 }
