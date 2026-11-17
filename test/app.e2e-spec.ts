@@ -111,6 +111,28 @@ describe('Billing Service (e2e)', () => {
           data: { id: '123456' },
         });
 
+    it.each([
+      [
+        'IPN antigo de pagamento',
+        '?id=123456&topic=payment',
+        { resource: '123456', topic: 'payment' },
+      ],
+      [
+        'merchant order',
+        '?id=987&topic=merchant_order',
+        {
+          resource: 'https://api.mercadolibre.com/merchant_orders/987',
+          topic: 'merchant_order',
+        },
+      ],
+    ])('%s sem assinatura: 200 e ignorado', async (_label, query, body) => {
+      const response = await request(app.getHttpServer())
+        .post(`/api/billing/webhooks/mercadopago${query}`)
+        .send(body);
+      expect(response.status).toBe(200);
+      expect(response.body).toEqual({ received: true, outcome: 'ignored' });
+    });
+
     it('sem assinatura: 401', async () => {
       const response = await notify();
       expect(response.status).toBe(401);

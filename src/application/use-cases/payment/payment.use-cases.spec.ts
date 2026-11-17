@@ -197,6 +197,25 @@ describe('HandlePaymentNotificationUseCase', () => {
     expect(await notification.execute('mp-1')).toBe('ignored');
   });
 
+  it('pagamento que o Mercado Pago não conhece: ignora sem erro', async () => {
+    const { gateway, notification, published } = setup(makePayment());
+    gateway.getPayment.mockRejectedValue(
+      new PaymentGatewayRejectedException('Payment not found'),
+    );
+    expect(await notification.execute('12345')).toBe('ignored');
+    expect(published).toHaveLength(0);
+  });
+
+  it('Mercado Pago fora do ar: o erro sobe para ele reenviar o aviso', async () => {
+    const { gateway, notification } = setup(makePayment());
+    gateway.getPayment.mockRejectedValue(
+      new PaymentGatewayUnavailableException('timeout'),
+    );
+    await expect(notification.execute('mp-1')).rejects.toBeInstanceOf(
+      PaymentGatewayUnavailableException,
+    );
+  });
+
   it('orçamento sem pagamento registrado: não publica', async () => {
     const { gateway, notification, published } = setup(null);
     gateway.getPayment.mockResolvedValue(remote('approved'));

@@ -40,12 +40,13 @@ export class MercadoPagoWebhookController {
     @Body() body: Notification,
   ) {
     const dataId = query['data.id'] ?? body?.data?.id?.toString();
-    this.assertSignature(signature, requestId, dataId);
-
     const type = query.type ?? body?.type;
+    // IPN antigo e merchant_order chegam sem assinatura; o aviso de pagamento assinado vem junto.
     if (type !== 'payment' || !dataId) {
       return { received: true, outcome: 'ignored' };
     }
+
+    this.assertSignature(signature, requestId, dataId);
     return {
       received: true,
       outcome: await this.handleNotification.execute(dataId),

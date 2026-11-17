@@ -60,12 +60,14 @@ A aprovação e a recusa do cliente publicam `billing.budget.approved` e `billin
 ## Mercado Pago (Checkout Pro)
 
 1. **Aprovação.** Ao aprovar o orçamento, o Billing cria o checkout no Mercado Pago (chave de idempotência = id do orçamento) e devolve o link de pagamento na resposta. Se o Mercado Pago estiver fora do ar, a aprovação responde **503** e nada muda: o cliente tenta de novo.
-2. **Webhook.** O Mercado Pago avisa em `/api/billing/webhooks/mercadopago`. O Billing valida a assinatura (`x-signature`, com a assinatura secreta do painel), **busca o pagamento na API do Mercado Pago** em vez de confiar no corpo do aviso e publica o evento.
+2. **Webhook.** O Mercado Pago avisa em `/api/billing/webhooks/mercadopago`. O Billing valida a assinatura (`x-signature`, com a assinatura secreta do painel), **busca o pagamento na API do Mercado Pago** em vez de confiar no corpo do aviso e publica o evento. O Mercado Pago manda vários avisos para o mesmo pagamento; os que não são de pagamento no formato atual (IPN antigo, `merchant_order`) chegam sem assinatura e são respondidos com 200 e ignorados, assim como um aviso de pagamento que o Mercado Pago não conhece (é o caso da *Simular notificação* do painel, com o id `12345`).
 3. **Duplicatas.** O mesmo aviso chega várias vezes. O Redis guarda os avisos já tratados (`mp:webhook:<id>:<status>`, 24 h) e trava a OS durante o processamento; o banco só aceita cada transição de status uma vez, então a duplicata é barrada mesmo com o Redis fora.
 4. **Estorno.** O comando `billing.payment.refund` chama a API de estornos (chave de idempotência = id do pagamento).
 5. **Cancelamento.** Cancelar um orçamento com pagamento pendente expira o checkout. Se o pagamento ainda entrar, ele é publicado mesmo assim e o OS pede o estorno (`LATE_PAYMENT`).
 
-Para testar no sandbox: cartões de teste do Mercado Pago, titular `APRO` (aprovado) ou `OTHE` (recusado), CPF `12345678909`, em janela anônima, logado com a conta de teste do comprador.
+**Estorno no sandbox.** A API de estornos exige as credenciais de produção da conta ativadas no painel do Mercado Pago (o que pede dados de empresa). Sem isso ela responde `Unauthorized use of live credentials`: o Billing trata como erro de configuração (3 retentativas e DLQ), e o comando pode ser reprocessado pelo painel do RabbitMQ depois de ativar as credenciais. O fluxo do estorno está coberto pelos testes de integração.
+
+Para testar no sandbox: cartões de teste do Mercado Pago, titular `APRO` (aprovado) ou `OTHE` (recusado), CPF `12345678909`, em janela anônima, logado com a conta de teste do comprador. O titular só pode ser trocado num cartão novo: o cartão já salvo na conta de teste mantém o nome com que foi cadastrado.
 
 ## CI/CD
 
