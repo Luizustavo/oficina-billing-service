@@ -7,7 +7,8 @@
 | `ingress.yaml` | O Traefik encaminha `/api/billing` para cá |
 | `hpa.yaml` | Escala de 1 a 2 réplicas por CPU e memória |
 | `configmap.yaml` | Configuração sem segredo |
-| `secret.example.yaml` | Modelo do Secret |
+| `secret.example.yaml` | Modelo do Secret: banco, JWT, RabbitMQ, New Relic |
+| `migration-job.yaml` | Migração do Prisma, rodada pelo CD antes de cada deploy |
 
 O namespace `billing` é criado pelo `oficina-infra-k8s` (`k8s/platform/namespaces.yaml`).
 

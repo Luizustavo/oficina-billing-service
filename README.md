@@ -16,6 +16,9 @@ Os serviços conversam só por mensagens no RabbitMQ, seguindo o [contrato de me
 
 ```bash
 npm install
+cp .env.example .env
+npm run prisma:generate
+npm run prisma:migrate:deploy
 npm run start:dev          # http://localhost:3000/api/billing/docs
 ```
 
@@ -32,8 +35,24 @@ Todas com o prefixo `/api/billing`, que o Traefik usa para encaminhar ao serviç
 
 | Rota | Descrição |
 |---|---|
-| `GET /api/billing/health/live` e `/ready` | Probes do Kubernetes |
+| `GET /api/billing/health/live` e `/ready` | Probes do Kubernetes (públicas) |
 | `GET /api/billing/docs` | Swagger |
+| `GET /api/billing/orders/:orderId/budget` | Orçamento atual da OS |
+| `POST /api/billing/budgets/:id/approve` | Cliente aprova o orçamento |
+| `POST /api/billing/budgets/:id/reject` | Cliente recusa o orçamento (motivo opcional) |
+
+As rotas de orçamento aceitam o token do cliente (emitido pela Lambda de CPF) e da equipe (`ADMIN`, `ATTENDANT`). O cliente só enxerga e decide os próprios orçamentos: o de outro cliente responde 404, igual a um orçamento inexistente.
+
+## Mensagens
+
+Consome a fila `billing.commands` (comandos do OS Service) e publica em `saga.events`, com outbox e consumidor idempotente:
+
+| Comando recebido | Resposta publicada |
+|---|---|
+| `billing.budget.create` | `billing.budget.created` ou `billing.budget.creation-failed` (`INVALID_PAYLOAD`, `INVALID_ITEMS`, `TOTAL_MISMATCH`) |
+| `billing.budget.cancel` | `billing.budget.canceled` (idempotente) |
+
+A aprovação e a recusa do cliente publicam `billing.budget.approved` e `billing.budget.rejected`.
 
 ## CI/CD
 

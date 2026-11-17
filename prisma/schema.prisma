@@ -1,0 +1,89 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum BudgetStatus {
+  AWAITING_APPROVAL
+  APPROVED
+  REJECTED
+  CANCELED
+}
+
+enum BudgetItemKind {
+  SERVICE
+  PART
+}
+
+model Budget {
+  id            String       @id
+  orderId       String
+  /// Uma tentativa da saga gera um orçamento (ADR-011).
+  sagaId        String       @unique
+  orderNumber   String
+  customerId    String
+  customerName  String
+  customerEmail String
+  vehiclePlate  String
+  totalAmount   Decimal      @db.Decimal(10, 2)
+  status        BudgetStatus
+  decidedBy     String?
+  decidedByRole String?
+  decidedAt     DateTime?
+  decisionNote  String?
+  cancelReason  String?
+  canceledAt    DateTime?
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+
+  items BudgetItem[]
+
+  @@index([orderId, createdAt])
+  @@index([customerId])
+  @@map("budgets")
+}
+
+model BudgetItem {
+  id        String         @id @default(uuid())
+  budgetId  String
+  kind      BudgetItemKind
+  /// serviceId ou partId no OS Service.
+  refId     String
+  name      String
+  unitPrice Decimal        @db.Decimal(10, 2)
+  quantity  Int
+  position  Int
+
+  budget Budget @relation(fields: [budgetId], references: [id], onDelete: Cascade)
+
+  @@unique([budgetId, position])
+  @@map("budget_items")
+}
+
+model OutboxMessage {
+  id          String    @id
+  exchange    String
+  routingKey  String
+  payload     Json
+  traceparent String?
+  tracestate  String?
+  createdAt   DateTime  @default(now())
+  publishedAt DateTime?
+
+  @@index([publishedAt, createdAt])
+  @@map("outbox_messages")
+}
+
+model ProcessedMessage {
+  messageId   String   @id
+  queue       String
+  messageType String
+  processedAt DateTime @default(now())
+
+  @@map("processed_messages")
+}

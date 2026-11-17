@@ -26,7 +26,6 @@ spec:
                 name: oficina-billing-service-config
             - secretRef:
                 name: oficina-billing-service-secret
-                optional: true
           env:
             - name: OTEL_RESOURCE_ATTRIBUTES
               value: "k8s.namespace.name=billing,k8s.deployment.name=oficina-billing-service"

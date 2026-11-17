@@ -38,6 +38,9 @@
       ],
       "@shared/*": [
         "src/shared/*"
+      ],
+      "@generated/*": [
+        "generated/*"
       ]
     }
   }
