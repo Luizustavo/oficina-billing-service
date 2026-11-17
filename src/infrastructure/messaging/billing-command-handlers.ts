@@ -1,5 +1,6 @@
 import { CreateBudgetUseCase } from '@application/use-cases/budget/create-budget.use-case';
 import { CancelBudgetUseCase } from '@application/use-cases/budget/cancel-budget.use-case';
+import { RefundPaymentUseCase } from '@application/use-cases/payment/refund-payment.use-case';
 import { SagaMessageHandlerRegistry } from './saga-message-handler.registry';
 import { Injectable, OnModuleInit } from '@nestjs/common';
 
@@ -9,6 +10,7 @@ export class BillingCommandHandlers implements OnModuleInit {
     private readonly registry: SagaMessageHandlerRegistry,
     private readonly createBudget: CreateBudgetUseCase,
     private readonly cancelBudget: CancelBudgetUseCase,
+    private readonly refundPayment: RefundPaymentUseCase,
   ) {}
 
   onModuleInit(): void {
@@ -21,6 +23,11 @@ export class BillingCommandHandlers implements OnModuleInit {
       type: 'billing.budget.cancel',
       versions: [1],
       handle: (command) => this.cancelBudget.execute(command),
+    });
+    this.registry.register({
+      type: 'billing.payment.refund',
+      versions: [1],
+      handle: (command) => this.refundPayment.execute(command),
     });
   }
 }

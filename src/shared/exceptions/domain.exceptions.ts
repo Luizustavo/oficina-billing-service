@@ -49,3 +49,17 @@ export class InvalidBudgetException extends DomainException {
     this.name = 'InvalidBudgetException';
   }
 }
+
+export class PaymentGatewayUnavailableException extends DomainException {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentGatewayUnavailableException';
+  }
+}
+
+export class PaymentGatewayRejectedException extends DomainException {
+  constructor(message: string) {
+    super(message);
+    this.name = 'PaymentGatewayRejectedException';
+  }
+}

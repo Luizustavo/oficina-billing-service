@@ -20,3 +20,8 @@ export interface BudgetResponseDto {
   cancelReason?: string;
   createdAt: Date;
 }
+
+export interface ApprovedBudgetResponseDto extends BudgetResponseDto {
+  checkoutUrl: string;
+  sandboxCheckoutUrl?: string;
+}

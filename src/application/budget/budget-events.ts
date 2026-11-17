@@ -4,7 +4,7 @@ import {
   OutgoingMessage,
   SagaEnvelope,
 } from '@domain/messaging/saga-message';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
 type SagaRef = Pick<SagaEnvelope, 'sagaId' | 'orderId'>;
 

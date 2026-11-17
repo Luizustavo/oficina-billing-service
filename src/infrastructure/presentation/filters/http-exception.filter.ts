@@ -2,6 +2,7 @@ import {
   InvalidStatusTransitionException,
   BusinessRuleException,
   NotFoundException,
+  PaymentGatewayUnavailableException,
   ConflictException,
   DomainException,
 } from '@shared/exceptions/domain.exceptions';
@@ -35,6 +36,9 @@ export class HttpExceptionFilter implements ExceptionFilter {
           ? exceptionResponse
           : ((exceptionResponse as { message: string }).message ??
             exception.message);
+    } else if (exception instanceof PaymentGatewayUnavailableException) {
+      statusCode = HttpStatus.SERVICE_UNAVAILABLE;
+      message = 'Payment provider unavailable, please try again';
     } else if (exception instanceof NotFoundException) {
       statusCode = HttpStatus.NOT_FOUND;
       message = exception.message;

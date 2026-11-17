@@ -7,7 +7,7 @@ import { BudgetEntity } from '@domain/entities/budget/budget.entity';
 import { BudgetEvents } from '@application/budget/budget-events';
 import { SagaEnvelope } from '@domain/messaging/saga-message';
 import { Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class CreateBudgetUseCase {

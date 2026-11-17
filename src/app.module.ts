@@ -1,6 +1,6 @@
 import { HttpExceptionFilter } from './infrastructure/presentation/filters/http-exception.filter';
 import { HealthController } from './infrastructure/presentation/controllers/health.controller';
-import { BudgetsModule } from './infrastructure/presentation/modules/budgets.module';
+import { BillingModule } from './infrastructure/presentation/modules/billing.module';
 import { JwtAuthGuard } from './infrastructure/presentation/guards/jwt-auth.guard';
 import { MessagingModule } from './infrastructure/messaging/messaging.module';
 import { PrismaModule } from './infrastructure/database/prisma/prisma.module';
@@ -18,7 +18,7 @@ import { Module } from '@nestjs/common';
     PassportModule,
     PrismaModule,
     MessagingModule,
-    BudgetsModule,
+    BillingModule,
   ],
   controllers: [HealthController],
   providers: [

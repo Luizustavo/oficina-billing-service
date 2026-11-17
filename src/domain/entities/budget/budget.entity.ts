@@ -108,6 +108,15 @@ export class BudgetEntity {
     return new BudgetEntity(props, id);
   }
 
+  ensureAwaitingApproval(): void {
+    if (this.props.status !== BudgetStatus.AWAITING_APPROVAL) {
+      throw new InvalidStatusTransitionException(
+        this.props.status,
+        BudgetStatus.APPROVED,
+      );
+    }
+  }
+
   approve(by: string, role: TokenRole): void {
     this.decide(BudgetStatus.APPROVED, by, role);
   }

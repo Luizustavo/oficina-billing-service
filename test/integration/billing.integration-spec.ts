@@ -12,10 +12,18 @@ import { BillingCommandsConsumer } from '@infrastructure/messaging/billing-comma
 import { OutboxRelayService } from '@infrastructure/messaging/outbox-relay.service';
 import { PrismaService } from '@infrastructure/database/prisma/prisma.service';
 import { BILLING_COMMANDS_QUEUE } from '@infrastructure/messaging/topology';
+import { HandlePaymentNotificationUseCase } from '@application/use-cases/payment/handle-payment-notification.use-case';
+import { PaymentRepository } from '@infrastructure/database/prisma/repositories/payment.repository';
+import { RefundPaymentUseCase } from '@application/use-cases/payment/refund-payment.use-case';
+import { RedisIdempotencyStore } from '@infrastructure/redis/redis-idempotency.store';
+import { RedisDistributedLock } from '@infrastructure/redis/redis-distributed.lock';
+import { IPaymentGateway } from '@domain/services/payment-gateway.interface';
+import { Money } from '@domain/value-objects/money.value-object';
+import { RedisClient } from '@infrastructure/redis/redis.client';
 import { SagaEnvelope } from '@domain/messaging/saga-message';
 import { TokenRole } from '@domain/enums/token-role.enum';
 import { Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { connect } from 'amqplib';
 
 import type {
@@ -34,6 +42,14 @@ describe('Billing Service (integração)', () => {
   let relay: OutboxRelayService;
   let consumer: BillingCommandsConsumer;
   let approveBudget: ApproveBudgetUseCase;
+  let handleNotification: HandlePaymentNotificationUseCase;
+  let redis: RedisClient;
+  const gateway = {
+    createCheckout: jest.fn(),
+    getPayment: jest.fn(),
+    refund: jest.fn(),
+    expireCheckout: jest.fn(),
+  } as jest.Mocked<IPaymentGateway>;
   let amqp: ChannelModel;
   let probe: Channel;
 
@@ -42,6 +58,8 @@ describe('Billing Service (integração)', () => {
     await prisma.onModuleInit();
     const budgets = new BudgetRepository(prisma);
     const outbox = new OutboxRepository(prisma);
+    const payments = new PaymentRepository(prisma);
+    redis = new RedisClient();
     const transactions = new PrismaTransactionManager(prisma);
     const logger = new Logger('billing-test');
 
@@ -55,7 +73,15 @@ describe('Billing Service (integração)', () => {
     new BillingCommandHandlers(
       registry,
       new CreateBudgetUseCase(budgets, outbox, transactions, logger),
-      new CancelBudgetUseCase(budgets, outbox, transactions, logger),
+      new CancelBudgetUseCase(
+        budgets,
+        payments,
+        outbox,
+        gateway,
+        transactions,
+        logger,
+      ),
+      new RefundPaymentUseCase(payments, outbox, gateway, transactions, logger),
     ).onModuleInit();
     consumer = new BillingCommandsConsumer(
       connection,
@@ -65,7 +91,18 @@ describe('Billing Service (integração)', () => {
     );
     approveBudget = new ApproveBudgetUseCase(
       budgets,
+      payments,
       outbox,
+      gateway,
+      transactions,
+      logger,
+    );
+    handleNotification = new HandlePaymentNotificationUseCase(
+      payments,
+      outbox,
+      gateway,
+      new RedisIdempotencyStore(redis),
+      new RedisDistributedLock(redis),
       transactions,
       logger,
     );
@@ -77,6 +114,12 @@ describe('Billing Service (integração)', () => {
   });
 
   beforeEach(async () => {
+    jest.resetAllMocks();
+    gateway.createCheckout.mockResolvedValue({
+      preferenceId: 'pref-1',
+      checkoutUrl: 'https://mp/checkout/pref-1',
+    });
+    await redis.connection.flushdb();
     await prisma.cleanDatabase();
     await probe.purgeQueue(CAPTURE_QUEUE);
     await probe.purgeQueue(`${BILLING_COMMANDS_QUEUE}.retry.1`);
@@ -86,6 +129,7 @@ describe('Billing Service (integração)', () => {
     await publisher.onModuleDestroy();
     await connection.onModuleDestroy();
     await amqp.close();
+    await redis.onModuleDestroy();
     await prisma.cleanDatabase();
     await prisma.onModuleDestroy();
   });
@@ -250,5 +294,149 @@ describe('Billing Service (integração)', () => {
     const unknown = command('billing.payment.unknown', {});
     expect(await consumer.handle(delivery(unknown))).toBe('rejected');
     expect(await prisma.outboxMessage.count()).toBe(0);
+  });
+
+  describe('pagamento (Mercado Pago simulado, Redis de verdade)', () => {
+    const approvedBudget = async () => {
+      const create = command('billing.budget.create', budgetCreate());
+      await consumer.handle(delivery(create));
+      await relay.publishPending();
+      await nextEvent();
+      const { id } = await prisma.budget.findUniqueOrThrow({
+        where: { sagaId: create.sagaId },
+      });
+      const approved = await approveBudget.execute(id, {
+        id: 'c-1',
+        role: TokenRole.CUSTOMER,
+      });
+      await relay.publishPending();
+      await nextEvent();
+      return { create, budgetId: id, approved };
+    };
+
+    const remotePayment = (
+      status: string,
+      budgetId: string,
+      orderId: string,
+    ) => ({
+      mpPaymentId: 'mp-123',
+      status,
+      statusDetail:
+        status === 'rejected' ? 'cc_rejected_other_reason' : 'accredited',
+      budgetId,
+      orderId,
+      amount: Money.fromDecimalString('241.80'),
+      approvedAt: new Date('2026-11-17T12:00:00Z'),
+    });
+
+    it('aprovação cria o pagamento pendente e devolve o link do checkout', async () => {
+      const { budgetId, approved } = await approvedBudget();
+      expect(approved.checkoutUrl).toBe('https://mp/checkout/pref-1');
+      expect(gateway.createCheckout).toHaveBeenCalledWith(
+        expect.objectContaining({ budgetId }),
+      );
+      expect(
+        await prisma.payment.findUniqueOrThrow({ where: { budgetId } }),
+      ).toMatchObject({ status: 'PENDING', mpPreferenceId: 'pref-1' });
+    });
+
+    it('webhook aprovado: publica billing.payment.confirmed uma vez só', async () => {
+      const { create, budgetId } = await approvedBudget();
+      gateway.getPayment.mockResolvedValue(
+        remotePayment('approved', budgetId, create.orderId),
+      );
+
+      expect(await handleNotification.execute('mp-123')).toBe('processed');
+      expect(await handleNotification.execute('mp-123')).toBe('duplicate');
+
+      expect(await redis.connection.exists('mp:webhook:mp-123:approved')).toBe(
+        1,
+      );
+      const payment = await prisma.payment.findUniqueOrThrow({
+        where: { budgetId },
+      });
+      expect(payment).toMatchObject({
+        status: 'APPROVED',
+        mpPaymentId: 'mp-123',
+      });
+      expect(await publishedEvent()).toMatchObject({
+        type: 'billing.payment.confirmed',
+        sagaId: create.sagaId,
+        payload: {
+          paymentId: payment.id,
+          mpPaymentId: 'mp-123',
+          amount: '241.80',
+        },
+      });
+      expect(await relay.publishPending()).toBe(0);
+    });
+
+    it('webhook recusado: publica billing.payment.failed', async () => {
+      const { create, budgetId } = await approvedBudget();
+      gateway.getPayment.mockResolvedValue(
+        remotePayment('rejected', budgetId, create.orderId),
+      );
+
+      await handleNotification.execute('mp-123');
+
+      expect(await publishedEvent()).toMatchObject({
+        type: 'billing.payment.failed',
+        payload: { reason: 'REJECTED', detail: 'cc_rejected_other_reason' },
+      });
+    });
+
+    it('cancelamento expira o checkout pendente', async () => {
+      const { create, budgetId } = await approvedBudget();
+      await consumer.handle(
+        delivery(
+          command(
+            'billing.budget.cancel',
+            { reason: 'PAYMENT_TIMEOUT' },
+            { sagaId: create.sagaId, orderId: create.orderId },
+          ),
+        ),
+      );
+
+      expect(gateway.expireCheckout).toHaveBeenCalledWith('pref-1');
+      expect(
+        await prisma.payment.findUniqueOrThrow({ where: { budgetId } }),
+      ).toMatchObject({ status: 'EXPIRED' });
+    });
+
+    it('billing.payment.refund: estorna e publica billing.payment.refunded', async () => {
+      const { create, budgetId } = await approvedBudget();
+      gateway.getPayment.mockResolvedValue(
+        remotePayment('approved', budgetId, create.orderId),
+      );
+      await handleNotification.execute('mp-123');
+      await relay.publishPending();
+      await nextEvent();
+      gateway.refund.mockResolvedValue({
+        refundId: 'rf-9',
+        amount: Money.fromDecimalString('241.80'),
+        refundedAt: new Date('2026-11-17T13:00:00Z'),
+      });
+
+      const refund = command(
+        'billing.payment.refund',
+        { reason: 'EXECUTION_FAILED' },
+        { sagaId: create.sagaId, orderId: create.orderId },
+      );
+      expect(await consumer.handle(delivery(refund))).toBe('processed');
+
+      const payment = await prisma.payment.findUniqueOrThrow({
+        where: { budgetId },
+      });
+      expect(gateway.refund).toHaveBeenCalledWith('mp-123', payment.id);
+      expect(payment).toMatchObject({ status: 'REFUNDED', mpRefundId: 'rf-9' });
+      expect(await publishedEvent()).toMatchObject({
+        type: 'billing.payment.refunded',
+        payload: {
+          paymentId: payment.id,
+          mpRefundId: 'rf-9',
+          amount: '241.80',
+        },
+      });
+    });
   });
 });

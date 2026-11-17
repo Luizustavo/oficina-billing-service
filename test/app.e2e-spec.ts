@@ -1,9 +1,14 @@
 import request from 'supertest';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
+import { IPaymentGateway } from '../src/domain/services/payment-gateway.interface';
+import { Money } from '../src/domain/value-objects/money.value-object';
 import { AppModule } from './../src/app.module';
-import { createHmac, randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { App } from 'supertest/types';
+
+const WEBHOOK_SECRET = 'e2e-webhook-secret';
+process.env.MP_WEBHOOK_SECRET = WEBHOOK_SECRET;
 
 const base64url = (value: object) =>
   Buffer.from(JSON.stringify(value)).toString('base64url');
@@ -26,13 +31,32 @@ const tokenFor = (role: string, sub = randomUUID()): string => {
   return `${header}.${payload}.${signature}`;
 };
 
+const mercadoPagoSignature = (dataId: string, requestId: string): string => {
+  const ts = Date.now().toString();
+  const hash = createHmac('sha256', WEBHOOK_SECRET)
+    .update(`id:${dataId};request-id:${requestId};ts:${ts};`)
+    .digest('hex');
+  return `ts=${ts},v1=${hash}`;
+};
+
 describe('Billing Service (e2e)', () => {
   let app: INestApplication<App>;
 
   beforeAll(async () => {
+    const gateway: Partial<IPaymentGateway> = {
+      getPayment: () =>
+        Promise.resolve({
+          mpPaymentId: '123456',
+          status: 'pending',
+          amount: Money.zero(),
+        }),
+    };
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(IPaymentGateway)
+      .useValue(gateway)
+      .compile();
     app = moduleFixture.createNestApplication();
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true }),
@@ -76,4 +100,40 @@ describe('Billing Service (e2e)', () => {
       .set('authorization', `Bearer ${tokenFor('CUSTOMER')}`)
       .send({ reason: 'caro', extra: true })
       .expect(400));
+
+  describe('webhook do Mercado Pago', () => {
+    const notify = () =>
+      request(app.getHttpServer())
+        .post('/api/billing/webhooks/mercadopago?data.id=123456&type=payment')
+        .send({
+          type: 'payment',
+          action: 'payment.updated',
+          data: { id: '123456' },
+        });
+
+    it('sem assinatura: 401', async () => {
+      const response = await notify();
+      expect(response.status).toBe(401);
+    });
+
+    it('assinatura de outro segredo: 401', async () => {
+      const response = await notify()
+        .set('x-request-id', 'req-1')
+        .set('x-signature', `ts=${Date.now()},v1=${'0'.repeat(64)}`);
+      expect(response.status).toBe(401);
+    });
+
+    it('assinatura válida: 200, mesmo com campos que não conhecemos no corpo', async () => {
+      const response = await notify()
+        .set('x-request-id', 'req-2')
+        .set('x-signature', mercadoPagoSignature('123456', 'req-2'))
+        .expect(200);
+      expect(response.body).toEqual({ received: true, outcome: 'ignored' });
+    });
+  });
+
+  it('pagamento sem token: 401', () =>
+    request(app.getHttpServer())
+      .get(`/api/billing/orders/${randomUUID()}/payment`)
+      .expect(401));
 });

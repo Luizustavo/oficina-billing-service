@@ -1,0 +1,15 @@
+export enum PaymentStatus {
+  PENDING = 'PENDING',
+  APPROVED = 'APPROVED',
+  REJECTED = 'REJECTED',
+  CANCELLED = 'CANCELLED',
+  EXPIRED = 'EXPIRED',
+  REFUNDED = 'REFUNDED',
+  REFUND_FAILED = 'REFUND_FAILED',
+}
+
+export type PaymentFailureReason =
+  | 'REJECTED'
+  | 'CANCELLED'
+  | 'EXPIRED'
+  | 'CHECKOUT_UNAVAILABLE';

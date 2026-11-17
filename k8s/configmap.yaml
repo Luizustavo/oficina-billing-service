@@ -11,3 +11,5 @@ data:
   OTEL_SERVICE_NAME: "oficina-billing-service"
   OTEL_EXPORTER_OTLP_ENDPOINT: "https://otlp.nr-data.net"
   OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE: "delta"
+  # URL pública do API Gateway (muda a cada apply do oficina-lambda-auth). O Mercado Pago chama o webhook em $PUBLIC_BASE_URL/api/billing/webhooks/mercadopago.
+  PUBLIC_BASE_URL: "https://REPLACE.execute-api.sa-east-1.amazonaws.com"
