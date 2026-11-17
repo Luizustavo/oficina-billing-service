@@ -39,11 +39,11 @@ export type CreatePaymentProps = Pick<
 /** As transições devolvem `false` quando não mudam nada: notificações do Mercado Pago se repetem. */
 export class PaymentEntity {
   private readonly props: PaymentProps;
-  private _id = '';
+  private readonly _id: string;
 
   private constructor(props: PaymentProps, id?: string) {
     this.props = props;
-    if (id) this._id = id;
+    this._id = id ?? '';
   }
 
   static create(props: CreatePaymentProps, id?: string): PaymentEntity {

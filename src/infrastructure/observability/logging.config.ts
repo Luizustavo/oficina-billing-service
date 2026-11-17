@@ -1,4 +1,4 @@
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
 import type { Params } from 'nestjs-pino';
 import type { IncomingMessage, ServerResponse } from 'http';

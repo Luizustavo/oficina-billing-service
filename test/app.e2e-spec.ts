@@ -4,7 +4,7 @@ import { Test, TestingModule } from '@nestjs/testing';
 import { IPaymentGateway } from '../src/domain/services/payment-gateway.interface';
 import { Money } from '../src/domain/value-objects/money.value-object';
 import { AppModule } from './../src/app.module';
-import { createHmac, randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'node:crypto';
 import { App } from 'supertest/types';
 
 const WEBHOOK_SECRET = 'e2e-webhook-secret';
@@ -111,13 +111,17 @@ describe('Billing Service (e2e)', () => {
           data: { id: '123456' },
         });
 
-    it('sem assinatura: 401', () => notify().expect(401));
+    it('sem assinatura: 401', async () => {
+      const response = await notify();
+      expect(response.status).toBe(401);
+    });
 
-    it('assinatura de outro segredo: 401', () =>
-      notify()
+    it('assinatura de outro segredo: 401', async () => {
+      const response = await notify()
         .set('x-request-id', 'req-1')
-        .set('x-signature', `ts=${Date.now()},v1=${'0'.repeat(64)}`)
-        .expect(401));
+        .set('x-signature', `ts=${Date.now()},v1=${'0'.repeat(64)}`);
+      expect(response.status).toBe(401);
+    });
 
     it('assinatura válida: 200, mesmo com campos que não conhecemos no corpo', async () => {
       const response = await notify()

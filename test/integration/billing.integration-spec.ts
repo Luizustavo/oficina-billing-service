@@ -23,7 +23,7 @@ import { RedisClient } from '@infrastructure/redis/redis.client';
 import { SagaEnvelope } from '@domain/messaging/saga-message';
 import { TokenRole } from '@domain/enums/token-role.enum';
 import { Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 import { connect } from 'amqplib';
 
 import type {

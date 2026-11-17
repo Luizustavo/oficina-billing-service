@@ -5,7 +5,7 @@ import {
 } from '@domain/messaging/saga-message';
 import { PaymentFailureReason } from '@domain/enums/payment.enum';
 import { PaymentEntity } from '@domain/entities/payment/payment.entity';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
 type SagaRef = Pick<SagaEnvelope, 'sagaId' | 'orderId'>;
 

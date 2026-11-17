@@ -9,7 +9,7 @@ import { PaymentEntity } from '@domain/entities/payment/payment.entity';
 import { BudgetEvents } from '@application/budget/budget-events';
 import { BudgetMapper } from '@application/mappers/budget.mapper';
 import { Injectable, Logger } from '@nestjs/common';
-import { randomUUID } from 'crypto';
+import { randomUUID } from 'node:crypto';
 
 @Injectable()
 export class ApproveBudgetUseCase {
