@@ -19,6 +19,7 @@ import { RedisIdempotencyStore } from '@infrastructure/redis/redis-idempotency.s
 import { RedisDistributedLock } from '@infrastructure/redis/redis-distributed.lock';
 import { IPaymentGateway } from '@domain/services/payment-gateway.interface';
 import { Money } from '@domain/value-objects/money.value-object';
+import { BillingMetrics } from '@infrastructure/observability/billing.metrics';
 import { RedisClient } from '@infrastructure/redis/redis.client';
 import { SagaEnvelope } from '@domain/messaging/saga-message';
 import { TokenRole } from '@domain/enums/token-role.enum';
@@ -58,7 +59,7 @@ describe('Billing Service (integração)', () => {
     await prisma.onModuleInit();
     const budgets = new BudgetRepository(prisma);
     const outbox = new OutboxRepository(prisma);
-    const payments = new PaymentRepository(prisma);
+    const payments = new PaymentRepository(prisma, new BillingMetrics());
     redis = new RedisClient();
     const transactions = new PrismaTransactionManager(prisma);
     const logger = new Logger('billing-test');
